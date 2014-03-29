@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Managing Files with Puppet by ryanycoleman</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1>Managing Files with Puppet</h1>
+        <p>From the basics to the Puppet Forge, several ways to effectively manage configuration files with Puppet.</p>
+
+
+        <p class="view"><a href="https://github.com/ryanycoleman">View My GitHub Profile</a></p>
+
+      </header>
+      <section>
+        <p>Working with files is one of the most common tasks when managing systems and therefore a routine task when working with a tool like Puppet. There are many to manage files with Puppet and last year I hosted a <a href="http://puppetlabs.com/webinars/using-puppet-forge-manage-configuration-files">webinar</a> about some of the options. I've been thinking a lot about them lately and thought others would find a written version useful. </p>
+
+<p>For the purpose of comparison, all I'm looking to do is manage the configuration of /etc/ssh/sshd_config on a single Red Hat server. More Puppet code would be necessary to fully manage an ssh server and accommodate for multiple operating systems. Thankfully, the <a href="http://forge.puppetlabs.com">Puppet Forge</a> offers plenty of options. </p>
+
+<h3>
+<a name="static-file-serving" class="anchor" href="#static-file-serving"><span class="octicon octicon-link"></span></a>Static File Serving</h3>
+
+<pre><code>file { '/etc/ssh/sshd_config':
+  ensure =&gt; file,
+  mode   =&gt; '0600',
+  owner  =&gt; 'root',
+  group  =&gt; 'root',
+  source =&gt; 'puppet:///modules/my_module/my_sshd_config',
+}
+</code></pre>
+
+<p>This is the most blunt instrument you can wield with Puppet. We're instructing Puppet to take a file we have (the source line) and deliver that file to the machine we're managing with a particular mode, owner and group. Puppet will first compare checksums and if a change is needed, it will overwrite the file, reporting back a diff of what changed.</p>
+
+<p>It's quick and easy but dirty. This technique forces everyone to manage that file through the same Puppet-sourced file (hope you're using version control) and every machine under management will get the same file, making it more complicated to account for differences between systems.</p>
+
+<h3>
+<a name="puppet-templates" class="anchor" href="#puppet-templates"><span class="octicon octicon-link"></span></a>Puppet Templates</h3>
+
+<pre><code>file { '/etc/ssh/sshd_config':
+  ensure   =&gt; file,
+  mode     =&gt; '0600',
+  owner    =&gt; 'root',
+  group    =&gt; 'root',
+  content =&gt; template('my_module/sshd_template.erb'),
+}
+</code></pre>
+
+<p>Templates are much more practical. The <a href="http://docs.puppetlabs.com/guides/templating.html">documentation on Puppet templates</a> will explain it in more detail but effectively, you're able to use information about the machine you're managing to tweak the configuration you actually manage on it. An example for sshd_config is the <a href="http://www.openssh.org/cgi-bin/man.cgi?query=sshd_config">ListenAddress</a> keyword. If we want it to be set to the ip address assigned to our machines eth0 adaptor, we simply need to specify the following in our sshd_config modeled as an erb template.</p>
+
+<p><code>ListenAddress &lt;%= @ipaddress_eth0 %&gt;</code></p>
+
+<p>Whenever Puppet runs on the machine you're managing, it delivers the value for ipaddress_eth0 (run <code>facter ipaddress_eth0</code> to see it now) to the Puppet Master which builds the appropriate sshd_config file for the machine to manage, similarly to how static files are managed by Puppet. It's much more flexible but templating still expects you to manage the entire file with Puppet, using the same source file. </p>
+
+<h3>
+<a name="concatenating-file-fragments" class="anchor" href="#concatenating-file-fragments"><span class="octicon octicon-link"></span></a>Concatenating File Fragments</h3>
+
+<pre><code>  $file_to_manage = '/etc/ssh/sshd_config'
+
+    concat{ $file_to_manage:
+        owner =&gt; 'root',
+    group =&gt; 'root',
+    mode  =&gt; '0600',
+  }
+
+    concat::fragment { 'Disclaimer':
+    ensure  =&gt; present,
+    target  =&gt; $file_to_manage,
+    order   =&gt; '01',
+    content =&gt; "# This file is managed by Puppet - your edits will be overwritten\n",
+  }
+
+  concat::fragment { 'Listen':
+    ensure  =&gt; present,
+    target  =&gt; $file_to_manage,
+    order   =&gt; '02',
+    content =&gt; "ListenAddress ${ipaddress_eth0}\n",
+  }
+
+  concat::fragment { 'Base':
+    ensure =&gt; present,
+    target =&gt; $file_to_manage,
+    order  =&gt; '10',
+    source =&gt; 'puppet:///modules/my_module/sshd_config_base',
+  }
+</code></pre>
+
+<p>This pattern involves many more lines of Puppet code but it's infinitely more flexible than what you've seen so far. These concat resources come from the <a href="http://forge.puppetlabs.com/puppetlabs/concat">puppetlabs-concat</a> module from the <a href="http://forge.puppetlabs.com">Puppet Forge</a>. If you boil it down, it's an abstraction above static file serving and Puppet template creation. You tell Puppet that you care about individual fragments of a file which don't have to be defined in the same spot in your Puppet code. Those fragments are put together on the machine you're managing. You can even configure it such that local users on the system can add their own fragments that won't be removed by Puppet, if that's what works for you. </p>
+
+<h3>
+<a name="scalpel-precision-with-augeas" class="anchor" href="#scalpel-precision-with-augeas"><span class="octicon octicon-link"></span></a>Scalpel Precision with Augeas</h3>
+
+<pre><code>    sshd_config { 'ListenAddress':
+        ensure =&gt; present,
+        value  =&gt; $ipaddress_eth0
+    }
+
+    sshd_config { 'PermitRootLogin':
+        ensure =&gt; present,
+        value  =&gt; 'no',
+    }
+</code></pre>
+
+<p>Finally, the pattern I'm most excited about. These Puppet resources are provided by the <a href="http://forge.puppetlabs.com/domcleal/augeasproviders">domcleal-augeasproviders</a> Forge module. The foundation is the rock-solid <a href="http://augeas.net/">Augeas</a> file manipulation tool. It specializes in understanding every element of a configuration file which allows it to make very specific modifications without requiring the entire file to be managed. Purists may use the <a href="http://docs.puppetlabs.com/references/latest/type.html#augeas">built-in augeas type</a> but for the rest of us, the Forge module combines the simplicity of the Puppet DSL with the flexibility and power of Augeas. </p>
+
+<p>It's so elegant that you can even ask Puppet to tell you about the state of every keyword in sshd_config in it's own language. </p>
+
+<pre><code>    [root@rhel ~]# puppet resource sshd_config
+    sshd_config { 'ChallengeResponseAuthentication':
+      ensure =&gt; 'present',
+      value  =&gt; ['no'],
+    }
+    sshd_config { 'ClientAliveInterval':
+      ensure =&gt; 'present',
+      value  =&gt; ['420'],
+    }
+    sshd_config { 'GSSAPIAuthentication':
+      ensure =&gt; 'present',
+      value  =&gt; ['yes'],
+    }
+    …
+</code></pre>
+
+<p>If you combine the sshd_config resources you want to manage with a special resource named <a href="http://docs.puppetlabs.com/references/latest/type.html#resources">resources</a>, you can instruct Puppet to include <em>only</em> the things you've expressed in your managed machines sshd_config. Surgical precision or a nuke from orbit, it's your choice. </p>
+
+<p>Try this stuff by installing <a href="http://docs.puppetlabs.com/guides/installation.html">Puppet</a> or try <a href="http://puppetlabs.com/puppet/puppet-enterprise">Puppet Enterprise</a> with everything ready to go for free on up to 10 machines. Learn much more about using Puppet at <a href="http://puppetlabs.com/learn">http://puppetlabs.com/learn</a>.</p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-49514702-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+  </body>
+</html>
