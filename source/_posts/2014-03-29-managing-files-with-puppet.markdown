@@ -12,7 +12,7 @@ For the purpose of comparison, all I'm looking to do is manage the configuration
 
 ### Static File Serving
 
-{% codeblock sshd_config.rb %}
+{% codeblock lang:puppet sshd_config.rb %}
 file { '/etc/ssh/sshd_config':
   ensure => file,
   mode   => '0600',
@@ -29,7 +29,7 @@ It's quick and easy but dirty. This technique forces everyone to manage that fil
 
 ### Puppet Templates
 
-{% codeblock sshd_config.rb %}
+{% codeblock lang:puppet sshd_config.rb %}
 file { '/etc/ssh/sshd_config':
   ensure   => file,
   mode     => '0600',
@@ -48,7 +48,7 @@ Whenever Puppet runs on the machine you're managing, it delivers the value for i
 
 ### Concatenating File Fragments
 
-{% codeblock concat.rb %}
+{% codeblock lang:puppet concat.rb %}
 $file_to_manage = '/etc/ssh/sshd_config'
 	
 concat{ $file_to_manage:
@@ -84,7 +84,7 @@ This pattern involves many more lines of Puppet code but it's infinitely more fl
 
 ### Scalpel Precision with Augeas
 
-{% codeblock augeas.rb %}
+{% codeblock lang:puppet augeas.rb %}
 sshd_config { 'ListenAddress':
   ensure => present,
   value  => $ipaddress_eth0
@@ -100,7 +100,7 @@ Finally, the pattern I'm most excited about. These Puppet resources are provided
 
 It's so elegant that you can even ask Puppet to tell you about the state of every keyword in sshd_config in it's own language. 
 
-{% codeblock resource.sh %}
+{% codeblock lang:puppet resource.pp %}
 [root@rhel ~]# puppet resource sshd_config
 sshd_config { 'ChallengeResponseAuthentication':
   ensure => 'present',
